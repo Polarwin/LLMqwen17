@@ -35,7 +35,10 @@ if [[ -f "$here/models/$model" ]]; then
 fi
 sudo install -m 0644 "$here/llama-server.service" "$unit_target"
 sudo systemctl daemon-reload
-sudo systemctl enable --now llama-server.service
+sudo systemctl enable llama-server.service
+# restart, not just "enable --now": a rerun must pick up changed flags —
+# "enable --now" leaves an already-active service on the old command line
+sudo systemctl restart llama-server.service
 
 # LAN HTTPS access via the existing homeserver nginx block (mkcert CA):
 # append the /llm/ proxy snippet before the closing brace of the 443 server
