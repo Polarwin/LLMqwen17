@@ -4,38 +4,67 @@
 # the existing homeserver nginx block at https://192.168.0.9/llm/v1.
 # Engine and model live in /opt/llm so any app on this host can use them.
 set -euo pipefail
+trap 'echo "ERROR: installation failed at line $LINENO" >&2' ERR
+
+step() {
+    printf '\n==> %s\n' "$1"
+}
 
 here=$(cd "$(dirname "$0")" && pwd)
 unit_target=/etc/systemd/system/llama-cli-wrapper.service
-model=Qwen3-1.7B-Q4_K_M.gguf
-model_url="https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/$model"
+models=(
+    Qwen3.5-2B-Q4_K_M.gguf
+    Qwen3-1.7B-Q4_K_M.gguf
+    SmolLM3-Q4_K_M.gguf
+)
+model_urls=(
+    "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf"
+    "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
+    "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf"
+)
 engine_url="https://github.com/ggml-org/llama.cpp/releases/download/b10797/llama-b10797-bin-ubuntu-vulkan-x64.tar.gz"
 
+step "Checking llama.cpp engine"
 # engine: llama-b10797 prebuilt Vulkan binaries must be here (see README)
 if [[ ! -f "$here/llama.cpp/llama-server" ]]; then
-    echo "llama.cpp engine missing, downloading from:" >&2
-    echo "  $engine_url" >&2
-    curl -fSL "$engine_url" | tar -xz -C "$here"
+    echo "Downloading llama.cpp b10797 Vulkan build"
+    curl -fL --progress-bar "$engine_url" | tar -xz -C "$here"
     mv "$here/llama-b10797" "$here/llama.cpp"
-fi
-# model: 1.1G; download if not shipped with this directory
-if [[ ! -f "$here/models/$model" && ! -f "/opt/llm/models/$model" ]]; then
-    echo "model $model missing, downloading from:" >&2
-    echo "  $model_url" >&2
-    mkdir -p "$here/models"
-    curl -fSL -o "$here/models/$model" "$model_url"
+else
+    echo "Found local llama.cpp engine"
 fi
 
+step "Checking model files"
+# models: download any that are neither staged here nor already installed
+mkdir -p "$here/models"
+for i in "${!models[@]}"; do
+    model=${models[$i]}
+    model_url=${model_urls[$i]}
+    if [[ ! -f "$here/models/$model" && ! -f "/opt/llm/models/$model" ]]; then
+        echo "Downloading $model"
+        curl -fL --progress-bar -o "$here/models/$model" "$model_url"
+    elif [[ -f "/opt/llm/models/$model" ]]; then
+        echo "Already installed: $model"
+    else
+        echo "Ready to install: $model"
+    fi
+done
+
+step "Installing engine, models, gateway, and web UI"
 sudo install -d -m 0755 /opt/llm /opt/llm/models /opt/llm/chat
 # engine: copy (keeps colocated .so files working via rpath $ORIGIN)
 sudo cp -a "$here/llama.cpp" /opt/llm/llama.cpp
-# model: move into /opt/llm (1.1G — no reason to keep two copies)
-if [[ -f "$here/models/$model" ]]; then
-    sudo mv "$here/models/$model" "/opt/llm/models/$model"
-fi
+# models: move staged GGUFs into /opt/llm (no reason to keep two copies)
+for model in "${models[@]}"; do
+    if [[ -f "$here/models/$model" ]]; then
+        sudo mv "$here/models/$model" "/opt/llm/models/$model"
+    fi
+done
 sudo install -m 0755 "$here/llama-cli-backend.py" /opt/llm/llama-cli-backend.py
 sudo install -m 0644 "$here/chat/index.html" /opt/llm/chat/index.html
 sudo install -m 0644 "$here/llama-cli-wrapper.service" "$unit_target"
+
+step "Starting the on-demand gateway"
 sudo systemctl daemon-reload
 sudo systemctl disable --now llama-server.service 2>/dev/null || true
 sudo systemctl enable llama-cli-wrapper.service
@@ -43,12 +72,13 @@ sudo systemctl enable llama-cli-wrapper.service
 # "enable --now" leaves an already-active service on the old command line
 sudo systemctl restart llama-cli-wrapper.service
 
+step "Configuring nginx"
 # LAN HTTPS access via the existing homeserver nginx block (mkcert CA):
 # append the /llm/ proxy snippet before the closing brace of the 443 server
 # (the closing brace is the last line of that file; verified by the guard).
 nginx_conf=/etc/nginx/sites-available/homeserver
 if sudo grep -q "# llm-begin" "$nginx_conf"; then
-    echo "nginx /llm/ location already present, skipping"
+    echo "Existing nginx /llm/ location found"
 else
     [[ $(sudo tail -n 1 "$nginx_conf") == "}" ]] \
         || { echo "unexpected nginx file ending, refusing to edit" >&2;
@@ -62,7 +92,17 @@ else
     rm -f "$tmp"
     sudo nginx -t
     sudo systemctl reload nginx
-    echo "nginx: /llm/ -> 127.0.0.1:8349 installed (backup: $nginx_conf.bak-llm)"
+    echo "Installed nginx route: /llm/ -> 127.0.0.1:8349"
+    echo "Nginx backup: $nginx_conf.bak-llm"
 fi
 
-sudo systemctl --no-pager --full status llama-cli-wrapper.service
+step "Installation complete"
+printf 'Gateway service: %s\n' "$(systemctl is-active llama-cli-wrapper.service)"
+printf 'Local API:       http://127.0.0.1:8349/v1\n'
+printf 'LAN API:         https://192.168.0.9/llm/v1\n'
+printf 'Web chat:        https://192.168.0.9/chat/\n'
+echo "Installed models:"
+for model in "${models[@]}"; do
+    printf '  %-34s %s\n' "$model" "$(du -h "/opt/llm/models/$model" | cut -f1)"
+done
+echo "The model loads on the first chat request and unloads after 300 seconds idle."

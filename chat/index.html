@@ -65,7 +65,9 @@
     white-space: nowrap;
   }
   header .model { color: var(--dim); font-size: 12px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; margin-left: auto; flex: 0 0 auto; }
+    text-overflow: ellipsis; white-space: nowrap; margin-left: auto; flex: 0 1 auto;
+    max-width: 240px; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 8px; }
   button {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px;
@@ -109,12 +111,14 @@
     <header>
       <button id="toggle-sidebar" title="Toggle chat list">☰</button>
       <h1 id="chat-title">New chat</h1>
-      <span class="model" id="model-name">connecting…</span>
+      <select class="model" id="model-name" title="Choose model" disabled>
+        <option>connecting…</option>
+      </select>
     </header>
     <div id="log"></div>
     <form id="form">
       <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
-      <button type="submit" id="send">Send</button>
+      <button type="submit" id="send" disabled>Send</button>
       <button type="button" id="stop">Stop</button>
     </form>
   </div>
@@ -124,6 +128,7 @@ const API = '/llm/v1/chat/completions';
 const STORE_KEY = 'qwenChat.conversations';
 const ACTIVE_KEY = 'qwenChat.activeId';
 const COLLAPSED_KEY = 'qwenChat.sidebarCollapsed';
+const MODEL_KEY = 'qwenChat.model';
 
 const sidebar = document.getElementById('sidebar');
 const chatList = document.getElementById('chat-list');
@@ -132,9 +137,11 @@ const log = document.getElementById('log');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const stopBtn = document.getElementById('stop');
+const modelSelect = document.getElementById('model-name');
 let model = 'Qwen3-1.7B';
 let controller = null;
 let busy = false;
+let modelsReady = false;
 
 // ---- persistence ----
 function loadChats() {
@@ -272,22 +279,46 @@ function renderContent(bubble, text) {
   log.scrollTop = log.scrollHeight;
 }
 
-fetch('/llm/v1/models').then(r => r.json()).then(d => {
-  model = d.data[0].id;
-  document.getElementById('model-name').textContent = model;
+fetch('/llm/v1/models').then(r => {
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  return r.json();
+}).then(d => {
+  if (!Array.isArray(d.data) || !d.data.length) throw new Error('no models installed');
+  const ids = d.data.map(item => item.id);
+  let saved = null;
+  try { saved = localStorage.getItem(MODEL_KEY); } catch {}
+  model = ids.includes(saved) ? saved : ids[0];
+  modelSelect.innerHTML = '';
+  for (const id of ids) {
+    const option = document.createElement('option');
+    option.value = id;
+    option.textContent = id.replace(/-Q4_K_M\.gguf$/, '').replace(/\.gguf$/, '');
+    modelSelect.appendChild(option);
+  }
+  modelSelect.value = model;
+  modelsReady = true;
+  modelSelect.disabled = false;
+  sendBtn.disabled = false;
 }).catch(() => {
-  document.getElementById('model-name').textContent = 'server unreachable';
+  modelSelect.innerHTML = '<option>server unreachable</option>';
+});
+
+modelSelect.addEventListener('change', () => {
+  model = modelSelect.value;
+  try { localStorage.setItem(MODEL_KEY, model); } catch {}
 });
 
 function setBusy(v) {
   busy = v;
-  sendBtn.disabled = v;
+  sendBtn.disabled = v || !modelsReady;
   stopBtn.style.display = v ? '' : 'none';
   input.disabled = v;
+  modelSelect.disabled = v || !modelsReady;
   if (!v) input.focus();
 }
 
 async function send(text) {
+  if (!modelsReady) return;
   const chat = getActiveChat();
   const wasEmpty = chat.messages.length === 0;
   chat.messages.push({ role: 'user', content: text });

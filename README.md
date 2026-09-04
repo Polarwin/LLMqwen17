@@ -9,6 +9,10 @@ RAM or VRAM continuously:
 - LAN devices: `https://192.168.0.9/llm/v1` (nginx + mkcert cert)
 - Tailscale devices: reachable through the tailnet like any other service
 
+The web UI can switch between Qwen3.5-2B, Qwen3-1.7B, and SmolLM3-3B. Only
+the selected model is loaded, and changing the selector takes effect on the
+next message.
+
 ## Hardware / OS requirements
 
 - x86_64 Linux with systemd (developed on Ubuntu 26.04)
@@ -48,7 +52,8 @@ The script:
    `/opt/llm/models/`
 2. installs and starts the lightweight `llama-cli-wrapper.service` gateway on
    port **8349**, while disabling the old always-on `llama-server.service`
-3. deploys the chat page to `/opt/llm/chat/index.html`
+3. installs all three model GGUFs and deploys the chat page to
+   `/opt/llm/chat/index.html`
 4. appends an `/llm/` proxy location to the existing `homeserver` nginx
    server block (backup at `…/homeserver.bak-llm`, `nginx -t` checked,
    hot reload — other apps are not interrupted)

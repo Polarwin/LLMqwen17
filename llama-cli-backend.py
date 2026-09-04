@@ -12,10 +12,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 LLAMA_SERVER = os.environ.get("LLAMA_SERVER", "/opt/llm/llama.cpp/llama-server")
-MODEL_PATH = os.environ.get(
-    "LLAMA_MODEL", "/opt/llm/models/Qwen3-1.7B-Q4_K_M.gguf"
+MODEL_DIR = os.environ.get("LLAMA_MODEL_DIR", "/opt/llm/models")
+MODEL_FILES = (
+    "Qwen3.5-2B-Q4_K_M.gguf",
+    "Qwen3-1.7B-Q4_K_M.gguf",
+    "SmolLM3-Q4_K_M.gguf",
 )
-MODEL_NAME = os.environ.get("LLAMA_MODEL_NAME", "Qwen3-1.7B-Q4_K_M.gguf")
+MODELS = {name: os.path.join(MODEL_DIR, name) for name in MODEL_FILES}
+DEFAULT_MODEL = os.environ.get("LLAMA_DEFAULT_MODEL", MODEL_FILES[0])
 HOST = os.environ.get("LLAMA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LLAMA_PORT", "8349"))
 ENGINE_HOST = os.environ.get("LLAMA_ENGINE_HOST", "127.0.0.1")
@@ -29,6 +33,7 @@ generation_lock = threading.Lock()
 state_lock = threading.Lock()
 stop_event = threading.Event()
 engine_process = None
+engine_model = None
 active_requests = 0
 last_activity = 0.0
 
@@ -50,17 +55,33 @@ def terminate_process(process):
         process.wait()
 
 
-def start_engine():
-    global engine_process
+def start_engine(model_name):
+    global engine_process, engine_model
 
+    process_to_stop = None
     with state_lock:
-        if engine_process is not None and engine_process.poll() is None:
+        if (
+            engine_process is not None
+            and engine_process.poll() is None
+            and engine_model == model_name
+        ):
             process = engine_process
         else:
+            if engine_process is not None and engine_process.poll() is None:
+                process_to_stop = engine_process
+            engine_process = None
+            engine_model = None
+
+    if process_to_stop is not None:
+        print(f"switching model from {process_to_stop.pid} to {model_name}", flush=True)
+        terminate_process(process_to_stop)
+
+    with state_lock:
+        if engine_process is None:
             engine_process = subprocess.Popen([
                 LLAMA_SERVER,
-                "-m", MODEL_PATH,
-                "--alias", MODEL_NAME,
+                "-m", MODELS[model_name],
+                "--alias", model_name,
                 "--host", ENGINE_HOST,
                 "--port", str(ENGINE_PORT),
                 "--ctx-size", str(CONTEXT_SIZE),
@@ -70,6 +91,7 @@ def start_engine():
                 "--cache-type-v", "q8_0",
                 "--no-webui",
             ])
+            engine_model = model_name
             process = engine_process
 
     deadline = time.monotonic() + START_TIMEOUT
@@ -80,6 +102,7 @@ def start_engine():
             with state_lock:
                 if engine_process is process:
                     engine_process = None
+                    engine_model = None
             raise RuntimeError(f"llama-server exited during startup with status {return_code}")
         connection = None
         try:
@@ -100,18 +123,20 @@ def start_engine():
     with state_lock:
         if engine_process is process:
             engine_process = None
+            engine_model = None
     terminate_process(process)
     raise RuntimeError(f"llama-server did not become ready: {last_error}")
 
 
 def idle_reaper():
-    global engine_process
+    global engine_process, engine_model
 
     while not stop_event.wait(1):
         process_to_stop = None
         with state_lock:
             if engine_process is not None and engine_process.poll() is not None:
                 engine_process = None
+                engine_model = None
             elif (
                 engine_process is not None
                 and active_requests == 0
@@ -120,6 +145,7 @@ def idle_reaper():
             ):
                 process_to_stop = engine_process
                 engine_process = None
+                engine_model = None
         if process_to_stop is not None:
             print(f"idle for {IDLE_TIMEOUT}s; stopping llama-server", flush=True)
             terminate_process(process_to_stop)
@@ -146,20 +172,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path.rstrip("/") == "/v1/models":
+            available = [name for name, path in MODELS.items() if os.path.isfile(path)]
             self.send_json(200, {
                 "object": "list",
                 "data": [{
-                    "id": MODEL_NAME,
+                    "id": name,
                     "object": "model",
                     "created": 0,
                     "owned_by": "local",
-                }],
+                } for name in available],
             })
             return
         if self.path.rstrip("/") == "/health":
             with state_lock:
                 running = engine_process is not None and engine_process.poll() is None
-            self.send_json(200, {"status": "ok", "model_loaded": running})
+                loaded_model = engine_model if running else None
+            self.send_json(200, {
+                "status": "ok",
+                "model_loaded": running,
+                "model": loaded_model,
+            })
             return
         self.send_error_json(404, "not found")
 
@@ -183,6 +215,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise RequestError(400, "request body must be a JSON object")
             if not isinstance(payload.get("messages"), list) or not payload["messages"]:
                 raise RequestError(400, "messages must be a non-empty array")
+            selected_model = payload.get("model", DEFAULT_MODEL)
+            if selected_model not in MODELS:
+                raise RequestError(400, f"unknown model: {selected_model!r}")
+            if not os.path.isfile(MODELS[selected_model]):
+                raise RequestError(400, f"model is not installed: {selected_model}")
             if not generation_lock.acquire(blocking=False):
                 raise RequestError(429, "another generation is already running")
         except (RequestError, ValueError) as error:
@@ -195,7 +232,7 @@ class Handler(BaseHTTPRequestHandler):
             active_requests += 1
 
         try:
-            start_engine()
+            start_engine(selected_model)
             self.proxy_completion(body)
         except (BrokenPipeError, ConnectionResetError):
             pass
@@ -245,6 +282,8 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    if DEFAULT_MODEL not in MODELS:
+        raise SystemExit(f"LLAMA_DEFAULT_MODEL is not configured: {DEFAULT_MODEL}")
     threading.Thread(target=idle_reaper, daemon=True).start()
     server = ThreadingHTTPServer((HOST, PORT), Handler)
 
@@ -267,5 +306,6 @@ if __name__ == "__main__":
         with state_lock:
             process = engine_process
             engine_process = None
+            engine_model = None
         terminate_process(process)
         server.server_close()
