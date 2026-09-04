@@ -1,0 +1,19 @@
+[Unit]
+Description=On-demand llama-server gateway (Qwen3-1.7B)
+After=network.target
+
+[Service]
+Type=simple
+User=justin
+Environment=PYTHONUNBUFFERED=1
+Environment=LLAMA_IDLE_TIMEOUT=300
+ExecStart=/usr/bin/python3 /opt/llm/llama-cli-backend.py
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+TimeoutStopSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

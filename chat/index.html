@@ -6,23 +6,66 @@
 <title>Qwen3 Chat</title>
 <style>
   :root {
-    --bg: #0f1115; --panel: #171a21; --border: #262b36;
+    --bg: #0f1115; --panel: #171a21; --panel-hover: #1d212b; --border: #262b36;
     --user: #2563eb; --text: #e5e7eb; --dim: #9ca3af;
   }
   * { box-sizing: border-box; margin: 0; }
   body {
     background: var(--bg); color: var(--text);
     font: 15px/1.55 system-ui, -apple-system, sans-serif;
-    display: flex; flex-direction: column; height: 100dvh;
+    height: 100dvh; overflow: hidden;
   }
+  .app { display: flex; height: 100%; }
+
+  /* ---- sidebar: historic chats ---- */
+  #sidebar {
+    width: 260px; flex: 0 0 260px; border-right: 1px solid var(--border);
+    display: flex; flex-direction: column; overflow: hidden;
+    transition: width .15s ease, flex-basis .15s ease, border-color .15s ease;
+  }
+  #sidebar.collapsed { width: 0; flex-basis: 0; border-color: transparent; }
+  .sidebar-header { padding: 10px; border-bottom: 1px solid var(--border); }
+  #new-chat {
+    width: 100%; text-align: left; background: var(--panel); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px;
+    cursor: pointer; font: inherit; font-weight: 600; white-space: nowrap;
+  }
+  #new-chat:hover { border-color: var(--dim); }
+  #chat-list { flex: 1; overflow-y: auto; padding: 6px; }
+  .chat-item {
+    display: flex; align-items: center; gap: 6px; padding: 9px 10px;
+    border-radius: 8px; cursor: pointer; white-space: nowrap;
+  }
+  .chat-item:hover { background: var(--panel-hover); }
+  .chat-item.active { background: var(--panel); }
+  .chat-item .title {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; font-size: 13.5px;
+  }
+  .chat-item .del {
+    background: none; border: none; color: var(--dim); cursor: pointer;
+    font-size: 15px; line-height: 1; padding: 2px 4px; border-radius: 4px;
+    opacity: .5;
+  }
+  .chat-item .del:hover { opacity: 1; color: #fca5a5; }
+
+  /* ---- main chat window ---- */
+  .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
   header {
     padding: 10px 16px; border-bottom: 1px solid var(--border);
     display: flex; align-items: center; gap: 10px;
   }
-  header h1 { font-size: 16px; font-weight: 600; }
+  #toggle-sidebar {
+    background: var(--panel); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 10px; cursor: pointer; font-size: 14px;
+    flex: 0 0 auto;
+  }
+  #toggle-sidebar:hover { border-color: var(--dim); }
+  header h1 {
+    font-size: 16px; font-weight: 600; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   header .model { color: var(--dim); font-size: 12px; overflow: hidden;
-    text-overflow: ellipsis; white-space: nowrap; }
-  #clear { margin-left: auto; }
+    text-overflow: ellipsis; white-space: nowrap; margin-left: auto; flex: 0 0 auto; }
   button {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px;
@@ -30,6 +73,7 @@
   button:hover { border-color: var(--dim); }
   #log { flex: 1; overflow-y: auto; padding: 16px; display: flex;
     flex-direction: column; gap: 12px; }
+  .empty { margin: auto; color: var(--dim); font-size: 14px; }
   .msg { max-width: 820px; padding: 10px 14px; border-radius: 12px;
     white-space: pre-wrap; word-wrap: break-word; }
   .msg.user { align-self: flex-end; background: var(--user); color: #fff;
@@ -54,28 +98,180 @@
 </style>
 </head>
 <body>
-<header>
-  <h1>Qwen3 Chat</h1>
-  <span class="model" id="model-name">connecting…</span>
-  <button id="clear" title="Clear conversation">Clear</button>
-</header>
-<div id="log"></div>
-<form id="form">
-  <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
-  <button type="submit" id="send">Send</button>
-  <button type="button" id="stop">Stop</button>
-</form>
+<div class="app">
+  <aside id="sidebar">
+    <div class="sidebar-header">
+      <button id="new-chat">+ New chat</button>
+    </div>
+    <div id="chat-list"></div>
+  </aside>
+  <div class="main">
+    <header>
+      <button id="toggle-sidebar" title="Toggle chat list">☰</button>
+      <h1 id="chat-title">New chat</h1>
+      <span class="model" id="model-name">connecting…</span>
+    </header>
+    <div id="log"></div>
+    <form id="form">
+      <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
+      <button type="submit" id="send">Send</button>
+      <button type="button" id="stop">Stop</button>
+    </form>
+  </div>
+</div>
 <script>
 const API = '/llm/v1/chat/completions';
+const STORE_KEY = 'qwenChat.conversations';
+const ACTIVE_KEY = 'qwenChat.activeId';
+const COLLAPSED_KEY = 'qwenChat.sidebarCollapsed';
+
+const sidebar = document.getElementById('sidebar');
+const chatList = document.getElementById('chat-list');
+const chatTitle = document.getElementById('chat-title');
 const log = document.getElementById('log');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const stopBtn = document.getElementById('stop');
-let history = [];
 let model = 'Qwen3-1.7B';
 let controller = null;
+let busy = false;
 
-// Resolve the actual model id from the server.
+// ---- persistence ----
+function loadChats() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
+    if (Array.isArray(raw) && raw.length) return raw;
+  } catch {}
+  return [];
+}
+function saveChats() {
+  try { localStorage.setItem(STORE_KEY, JSON.stringify(chats)); } catch {}
+}
+function saveActiveId() {
+  try { localStorage.setItem(ACTIVE_KEY, activeId); } catch {}
+}
+
+let chats = loadChats();
+let activeId = null;
+try { activeId = localStorage.getItem(ACTIVE_KEY); } catch {}
+if (!chats.length) chats = [newChatObj()];
+if (!activeId || !chats.some(c => c.id === activeId)) activeId = chats[0].id;
+
+function newChatObj() {
+  return { id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    title: 'New chat', messages: [] };
+}
+function getActiveChat() { return chats.find(c => c.id === activeId); }
+
+// ---- sidebar ----
+function renderSidebar() {
+  chatList.innerHTML = '';
+  for (const c of chats) {
+    const item = document.createElement('div');
+    item.className = 'chat-item' + (c.id === activeId ? ' active' : '');
+    const title = document.createElement('span');
+    title.className = 'title';
+    title.textContent = c.title;
+    const del = document.createElement('button');
+    del.className = 'del';
+    del.textContent = '×';
+    del.title = 'Delete chat';
+    del.addEventListener('click', e => { e.stopPropagation(); deleteChat(c.id); });
+    item.append(title, del);
+    item.addEventListener('click', () => switchChat(c.id));
+    chatList.appendChild(item);
+  }
+}
+
+function switchChat(id) {
+  if (busy) return;
+  activeId = id;
+  saveActiveId();
+  renderSidebar();
+  renderLog();
+}
+
+function deleteChat(id) {
+  if (busy) return;
+  chats = chats.filter(c => c.id !== id);
+  if (!chats.length) chats = [newChatObj()];
+  if (activeId === id) activeId = chats[0].id;
+  saveChats();
+  saveActiveId();
+  renderSidebar();
+  renderLog();
+}
+
+document.getElementById('new-chat').addEventListener('click', () => {
+  if (busy) return;
+  const c = newChatObj();
+  chats.unshift(c);
+  activeId = c.id;
+  saveChats();
+  saveActiveId();
+  renderSidebar();
+  renderLog();
+  input.focus();
+});
+
+function setSidebarCollapsed(collapsed) {
+  sidebar.classList.toggle('collapsed', collapsed);
+  try { localStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0'); } catch {}
+}
+document.getElementById('toggle-sidebar').addEventListener('click', () => {
+  setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
+});
+{
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(COLLAPSED_KEY) === '1'; } catch {}
+  if (!collapsed && window.innerWidth < 700) collapsed = true; // sane default on small screens
+  setSidebarCollapsed(collapsed);
+}
+
+// ---- chat window ----
+function renderLog() {
+  const chat = getActiveChat();
+  chatTitle.textContent = chat.title;
+  log.innerHTML = '';
+  if (!chat.messages.length) {
+    const p = document.createElement('div');
+    p.className = 'empty';
+    p.textContent = 'Say something to get started.';
+    log.appendChild(p);
+    return;
+  }
+  for (const m of chat.messages) {
+    const div = addRawMsg(m.role === 'user' ? 'user' : 'bot');
+    renderContent(div, m.content);
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
+function addRawMsg(role) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + role;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+// Render text into a bubble, dimming Qwen3 <think> blocks.
+function renderContent(bubble, text) {
+  bubble.innerHTML = '';
+  const parts = text.split(/(<think>[\s\S]*?(?:<\/think>|$))/);
+  for (const p of parts) {
+    if (p.startsWith('<think>')) {
+      const s = document.createElement('span');
+      s.className = 'think';
+      s.textContent = p.replace(/<\/?think>/g, '');
+      bubble.appendChild(s);
+    } else if (p) {
+      bubble.appendChild(document.createTextNode(p));
+    }
+  }
+  log.scrollTop = log.scrollHeight;
+}
+
 fetch('/llm/v1/models').then(r => r.json()).then(d => {
   model = d.data[0].id;
   document.getElementById('model-name').textContent = model;
@@ -83,35 +279,33 @@ fetch('/llm/v1/models').then(r => r.json()).then(d => {
   document.getElementById('model-name').textContent = 'server unreachable';
 });
 
-function addMsg(role, text) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + role;
-  div.textContent = text;
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
-}
-
-function setBusy(busy) {
-  sendBtn.disabled = busy;
-  stopBtn.style.display = busy ? '' : 'none';
-  input.disabled = busy;
-  if (!busy) input.focus();
+function setBusy(v) {
+  busy = v;
+  sendBtn.disabled = v;
+  stopBtn.style.display = v ? '' : 'none';
+  input.disabled = v;
+  if (!v) input.focus();
 }
 
 async function send(text) {
-  history.push({ role: 'user', content: text });
-  addMsg('user', text);
-  const bubble = addMsg('bot', '');
+  const chat = getActiveChat();
+  const wasEmpty = chat.messages.length === 0;
+  chat.messages.push({ role: 'user', content: text });
+  if (wasEmpty) chat.title = text.length > 42 ? text.slice(0, 42) + '…' : text;
+  saveChats();
+  renderSidebar();
+  addRawMsg('user').textContent = text;
+  const bubble = addRawMsg('bot');
   bubble.classList.add('cursor');
+  chatTitle.textContent = chat.title;
   setBusy(true);
   controller = new AbortController();
-  let reply = '', think = '';
+  let reply = '';
   try {
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: history, stream: true }),
+      body: JSON.stringify({ model, messages: chat.messages, stream: true }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
@@ -129,41 +323,28 @@ async function send(text) {
         const payload = line.slice(6).trim();
         if (payload === '[DONE]') continue;
         const delta = JSON.parse(payload).choices?.[0]?.delta;
-        if (delta?.content) { reply += delta.content; render(); }
+        if (delta?.content) { reply += delta.content; renderContent(bubble, reply); }
       }
     }
   } catch (e) {
     if (e.name !== 'AbortError') {
       bubble.classList.add('error');
       reply += (reply ? '\n\n' : '') + '⚠ ' + e.message;
-      render();
+      renderContent(bubble, reply);
     }
   } finally {
     bubble.classList.remove('cursor');
     setBusy(false);
     controller = null;
-    if (reply) history.push({ role: 'assistant', content: reply });
-  }
-  // Render, dimming Qwen3 <think> blocks.
-  function render() {
-    bubble.textContent = reply;
-    const t = bubble.firstChild;
-    // simple approach: split think blocks into dimmed spans
-    bubble.innerHTML = '';
-    const parts = reply.split(/(<think>[\s\S]*?(?:<\/think>|$))/);
-    for (const p of parts) {
-      if (p.startsWith('<think>')) {
-        const s = document.createElement('span');
-        s.className = 'think';
-        s.textContent = p.replace(/<\/?think>/g, '');
-        bubble.appendChild(s);
-      } else {
-        bubble.appendChild(document.createTextNode(p));
-      }
+    if (reply) {
+      chat.messages.push({ role: 'assistant', content: reply });
+      saveChats();
     }
-    log.scrollTop = log.scrollHeight;
   }
 }
+
+renderSidebar();
+renderLog();
 
 document.getElementById('form').addEventListener('submit', e => {
   e.preventDefault();
@@ -181,9 +362,6 @@ input.addEventListener('input', () => {
   input.style.height = Math.min(input.scrollHeight, 160) + 'px';
 });
 stopBtn.addEventListener('click', () => controller?.abort());
-document.getElementById('clear').addEventListener('click', () => {
-  history = []; log.innerHTML = ''; input.focus();
-});
 </script>
 </body>
 </html>

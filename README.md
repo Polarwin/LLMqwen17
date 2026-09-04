@@ -1,7 +1,9 @@
-# LLMqwen17 — Qwen3-1.7B local LLM service
+# LLMqwen17 — on-demand Qwen3-1.7B local chat
 
-System-wide local LLM on this Ubuntu host (not tied to any single project).
-llama.cpp serves **Qwen3-1.7B Q4_K_M** as an OpenAI-compatible API:
+System-wide local LLM on this Ubuntu host. A small Python gateway starts
+`llama-server` for the first completion, proxies its native OpenAI-compatible
+API, and stops it after five idle minutes. The model therefore does not occupy
+RAM or VRAM continuously:
 
 - local apps: `http://127.0.0.1:8349/v1`
 - LAN devices: `https://192.168.0.9/llm/v1` (nginx + mkcert cert)
@@ -10,11 +12,11 @@ llama.cpp serves **Qwen3-1.7B Q4_K_M** as an OpenAI-compatible API:
 ## Hardware / OS requirements
 
 - x86_64 Linux with systemd (developed on Ubuntu 26.04)
-- **≥ 4 GB free RAM** (model 1.1 GB + context + OS headroom)
+- **>= 4 GB free RAM while generating** (model 1.1 GB + context + OS headroom)
 - Optional GPU offload: any Vulkan-capable GPU with **≥ 2 GB VRAM**
   (developed on a GeForce MX350, NVIDIA driver 580). Without a GPU the
-  same setup runs CPU-only — change `-ngl 99` to `-ngl 0` in
-  `llama-server.service`, expect roughly half the speed.
+  same setup runs CPU-only. `llama-server` uses automatic GPU offload, so it can
+  fall back toward CPU if VRAM is already occupied.
 
 ## Required packages
 
@@ -24,7 +26,8 @@ llama.cpp serves **Qwen3-1.7B Q4_K_M** as an OpenAI-compatible API:
 | `libvulkan1` | Vulkan runtime used by the prebuilt llama.cpp binaries |
 | `nvidia-driver-580` | optional, GPU offload on the MX350 |
 | `nginx` | optional, LAN HTTPS exposure (`/llm/` location) |
-| `systemd` | service management |
+| `python3` | dependency-free HTTP wrapper |
+| `systemd` | wrapper service management |
 
 Bundled in this directory (no build needed):
 
@@ -43,9 +46,10 @@ The script:
 
 1. copies the engine to `/opt/llm/llama.cpp`, moves the model to
    `/opt/llm/models/`
-2. installs and starts `llama-server.service` (port **8349**, localhost only;
-   never use port 8000 on this host — 8000/8347/8349 are taken)
-3. appends an `/llm/` proxy location to the existing `homeserver` nginx
+2. installs and starts the lightweight `llama-cli-wrapper.service` gateway on
+   port **8349**, while disabling the old always-on `llama-server.service`
+3. deploys the chat page to `/opt/llm/chat/index.html`
+4. appends an `/llm/` proxy location to the existing `homeserver` nginx
    server block (backup at `…/homeserver.bak-llm`, `nginx -t` checked,
    hot reload — other apps are not interrupted)
 
@@ -53,38 +57,39 @@ The script:
 
 ```bash
 curl http://127.0.0.1:8349/v1/chat/completions -H "Content-Type: application/json" -d '{
-  "messages": [{"role": "user", "content": "你好，介绍一下你自己。 /no_think"}],
-  "chat_template_kwargs": {"enable_thinking": false},
+  "messages": [{"role": "user", "content": "Hello. Reply briefly. /no_think"}],
+  "stream": true,
   "max_tokens": 200
 }'
 ```
 
 Notes for good results with a 1.7B model:
 
-- **`/no_think`** (or `chat_template_kwargs.enable_thinking=false`) —
-  thinking mode is slow and unnecessary for simple tasks
-- **JSON Schema** (`response_format`) to force structured output — llama.cpp
-  enforces it via constrained decoding
-- annotate closed-set candidate lists with **pinyin** when matching
-  Chinese speech transcripts
-- the server caches the prompt prefix — keep the static part of the prompt
-  first for much faster repeat calls
+- **`/no_think`** in a prompt disables thinking when it is unnecessary.
+- One generation runs at a time to avoid loading two model copies into the
+  MX350's 2 GB VRAM. A concurrent request receives HTTP 429.
+- The gateway lets `llama-server` apply the exact chat template from the GGUF;
+  it does not parse REPL output or hand-build ChatML.
+- Requests, including streaming SSE, are proxied without translating their
+  OpenAI request or response bodies.
+- The model stays warm for 300 seconds after a response, then the child server
+  is terminated. Set `LLAMA_IDLE_TIMEOUT` in the systemd unit to change this.
 
 Measured on this host (i5-10210U + MX350): ~3 s for a 200-token parse call.
 
 ## Manage
 
 ```bash
-systemctl status llama-server
-sudo systemctl restart llama-server
-journalctl -u llama-server -f
+systemctl status llama-cli-wrapper
+sudo systemctl restart llama-cli-wrapper
+journalctl -u llama-cli-wrapper -f
 ```
 
 ## Uninstall
 
 ```bash
-sudo systemctl disable --now llama-server.service
-sudo rm /etc/systemd/system/llama-server.service
+sudo systemctl disable --now llama-cli-wrapper.service
+sudo rm /etc/systemd/system/llama-cli-wrapper.service
 sudo systemctl daemon-reload
 sudo rm -rf /opt/llm
 # then remove the block between "# llm-begin" and "# llm-end" in
