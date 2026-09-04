@@ -1,0 +1,13 @@
+[Unit]
+Description=llama.cpp server (Qwen3-1.7B, OpenAI-compatible API on 127.0.0.1:8349)
+After=network.target
+
+[Service]
+Type=simple
+User=justin
+ExecStart=/opt/llm/llama.cpp/llama-server -m /opt/llm/models/Qwen3-1.7B-Q4_K_M.gguf --port 8349 --host 127.0.0.1 -ngl 99 -c 8192 --cache-type-k q8_0 --cache-type-v q8_0 --no-webui
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
