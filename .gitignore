@@ -1,3 +1,7 @@
 # Large artifacts fetched by install.sh — not committed
 llama.cpp/
 models/
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

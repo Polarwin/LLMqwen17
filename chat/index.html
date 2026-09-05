@@ -68,6 +68,28 @@
     text-overflow: ellipsis; white-space: nowrap; margin-left: auto; flex: 0 1 auto;
     max-width: 240px; background: var(--panel); border: 1px solid var(--border);
     border-radius: 7px; padding: 6px 8px; }
+  #task-strip {
+    display: flex; gap: 8px; padding: 10px 16px; overflow-x: auto;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(90deg, #121820, #11141a 55%, #181711);
+    scrollbar-width: thin;
+  }
+  .task-option {
+    min-width: 142px; padding: 9px 11px; text-align: left; flex: 1 0 142px;
+    border-color: transparent; background: rgba(255,255,255,.025);
+  }
+  .task-option:hover:not(:disabled) { background: var(--panel-hover); }
+  .task-option.active {
+    border-color: #d6a84b; background: linear-gradient(135deg, #242015, #1b2025);
+    box-shadow: inset 0 0 0 1px rgba(214,168,75,.12);
+  }
+  .task-option:disabled { opacity: .35; cursor: not-allowed; }
+  .task-kicker {
+    display: block; color: #d6a84b; font-size: 9px; font-weight: 800;
+    letter-spacing: .14em; margin-bottom: 2px;
+  }
+  .task-name { display: block; font: 600 13px/1.3 Georgia, serif; }
+  .task-desc { display: block; color: var(--dim); font-size: 10px; margin-top: 2px; }
   button {
     background: var(--panel); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 14px; cursor: pointer; font-size: 14px;
@@ -86,17 +108,43 @@
   .msg .think { color: var(--dim); font-size: 13px; font-style: italic; }
   .cursor::after { content: "▊"; animation: blink 1s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  form { display: flex; gap: 8px; padding: 12px 16px;
+  form { display: flex; gap: 8px; padding: 12px 16px; align-items: flex-end;
     border-top: 1px solid var(--border); }
+  .composer { flex: 1; min-width: 0; }
+  .input-row { display: flex; gap: 8px; align-items: flex-end; }
   textarea {
     flex: 1; resize: none; background: var(--panel); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
     font: inherit; max-height: 160px;
   }
   textarea:focus { outline: none; border-color: var(--dim); }
+  #attach {
+    width: 42px; height: 42px; flex: 0 0 42px; padding: 0;
+    color: var(--dim); font-size: 20px; line-height: 1;
+  }
+  #attach:disabled { opacity: .4; cursor: default; }
+  #attachments { display: none; flex-wrap: wrap; gap: 6px; padding: 0 0 7px 50px; }
+  #attachments.visible { display: flex; }
+  .attachment-chip, .message-file {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 260px;
+    border: 1px solid #394351; border-radius: 999px; padding: 4px 8px;
+    background: #1a2028; color: #cbd5e1; font-size: 11px;
+  }
+  .attachment-chip .filename, .message-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .attachment-chip button {
+    padding: 0; border: 0; background: none; color: var(--dim);
+    font-size: 15px; line-height: 1;
+  }
+  .attachment-error { color: #fca5a5; font-size: 11px; align-self: center; }
+  .message-files { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
   #send { background: var(--user); border: none; color: #fff; font-weight: 600; }
   #send:disabled { opacity: .5; cursor: default; }
   #stop { display: none; background: #b91c1c; border: none; color: #fff; }
+  @media (max-width: 700px) {
+    #task-strip { padding: 8px 10px; }
+    .task-option { min-width: 126px; flex-basis: 126px; }
+    header .model { max-width: 132px; }
+  }
 </style>
 </head>
 <body>
@@ -115,9 +163,18 @@
         <option>connecting…</option>
       </select>
     </header>
+    <div id="task-strip" role="tablist" aria-label="Choose a task"></div>
     <div id="log"></div>
     <form id="form">
-      <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
+      <div class="composer">
+        <div id="attachments" aria-live="polite"></div>
+        <div class="input-row">
+          <button type="button" id="attach" title="Attach a text file" aria-label="Attach a text file">+</button>
+          <input type="file" id="file-input" multiple hidden
+            accept="text/*,.md,.json,.yaml,.yml,.toml,.ini,.csv,.xml,.sql,.log,.py,.js,.ts,.tsx,.jsx,.html,.css,.sh,.go,.rs,.java,.c,.h,.cpp,.hpp">
+          <textarea id="input" rows="1" placeholder="Message… (Enter to send, Shift+Enter for newline)" autofocus></textarea>
+        </div>
+      </div>
       <button type="submit" id="send" disabled>Send</button>
       <button type="button" id="stop">Stop</button>
     </form>
@@ -129,6 +186,45 @@ const STORE_KEY = 'qwenChat.conversations';
 const ACTIVE_KEY = 'qwenChat.activeId';
 const COLLAPSED_KEY = 'qwenChat.sidebarCollapsed';
 const MODEL_KEY = 'qwenChat.model';
+const TASK_KEY = 'qwenChat.task';
+const TASKS = {
+  general: {
+    kicker: 'EVERYDAY', name: 'General chat', detail: 'Balanced help and reasoning',
+    model: 'Qwen3.5-2B-Q4_K_M.gguf',
+    prompt: 'Be a clear, practical general assistant. Answer directly and state uncertainty when needed.',
+    starter: 'Ask a question, explore an idea, or make a plan.'
+  },
+  code: {
+    kicker: 'BUILD', name: 'Code studio', detail: 'Write, debug, and explain code',
+    model: 'qwen2.5-coder-3b-instruct-q4_k_m.gguf',
+    prompt: 'Act as a pragmatic software engineer. Prefer correct, runnable code; explain key tradeoffs and identify assumptions.',
+    starter: 'Describe a bug, paste code, or request an implementation.'
+  },
+  math: {
+    kicker: 'SOLVE', name: 'Math lab', detail: 'Algebra, calculus, and proofs',
+    model: 'Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf',
+    prompt: 'Act as a careful mathematics tutor. Show a clear derivation, verify arithmetic and assumptions, and distinguish exact from approximate results.',
+    starter: 'Enter an equation, word problem, proof, or calculation.'
+  },
+  documents: {
+    kicker: 'ANALYZE', name: 'Document desk', detail: 'Summaries and structured extraction',
+    model: 'granite-3.3-2b-instruct-Q4_K_M.gguf',
+    prompt: 'Analyze the supplied text carefully. Separate facts from inference and use structured output when it improves clarity.',
+    starter: 'Paste a document to summarize, compare, or extract.'
+  },
+  writing: {
+    kicker: 'CREATE', name: 'Writing room', detail: 'Drafting and multilingual prose',
+    model: 'SmolLM3-Q4_K_M.gguf',
+    prompt: 'Help draft and revise natural prose. Preserve the requested voice, language, meaning, and level of formality.',
+    starter: 'Draft, rewrite, translate, or refine a passage.'
+  },
+  quick: {
+    kicker: 'FAST', name: 'Quick answer', detail: 'Lowest latency for simple requests',
+    model: 'Qwen3-1.7B-Q4_K_M.gguf',
+    prompt: 'Answer directly and concisely. Avoid extended reasoning unless the user explicitly requests it.',
+    starter: 'Ask for a short answer, definition, or simple transformation.'
+  }
+};
 
 const sidebar = document.getElementById('sidebar');
 const chatList = document.getElementById('chat-list');
@@ -138,10 +234,23 @@ const input = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const stopBtn = document.getElementById('stop');
 const modelSelect = document.getElementById('model-name');
-let model = 'Qwen3-1.7B';
+const taskStrip = document.getElementById('task-strip');
+const attachBtn = document.getElementById('attach');
+const fileInput = document.getElementById('file-input');
+const attachmentTray = document.getElementById('attachments');
+const MAX_ATTACHMENT_BYTES = 25 * 1024;
+let model = TASKS.general.model;
 let controller = null;
 let busy = false;
 let modelsReady = false;
+let availableModels = new Set();
+let activeTask = 'general';
+let pendingAttachments = [];
+let attachmentError = '';
+try {
+  const savedTask = localStorage.getItem(TASK_KEY);
+  if (TASKS[savedTask]) activeTask = savedTask;
+} catch {}
 
 // ---- persistence ----
 function loadChats() {
@@ -170,6 +279,103 @@ function newChatObj() {
 }
 function getActiveChat() { return chats.find(c => c.id === activeId); }
 
+function conversationAttachmentBytes() {
+  return getActiveChat().messages.reduce((total, message) =>
+    total + (message.attachments || []).reduce((sum, file) => sum + file.size, 0), 0);
+}
+
+function clearAttachments() {
+  pendingAttachments = [];
+  attachmentError = '';
+  fileInput.value = '';
+  renderAttachments();
+}
+
+function renderAttachments() {
+  attachmentTray.innerHTML = '';
+  for (const file of pendingAttachments) {
+    const chip = document.createElement('span');
+    chip.className = 'attachment-chip';
+    const name = document.createElement('span');
+    name.className = 'filename';
+    name.textContent = `${file.name} · ${Math.max(1, Math.ceil(file.size / 1024))} KB`;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.textContent = '×';
+    remove.title = `Remove ${file.name}`;
+    remove.addEventListener('click', () => {
+      pendingAttachments = pendingAttachments.filter(item => item.id !== file.id);
+      renderAttachments();
+    });
+    chip.append(name, remove);
+    attachmentTray.appendChild(chip);
+  }
+  if (attachmentError) {
+    const error = document.createElement('span');
+    error.className = 'attachment-error';
+    error.textContent = attachmentError;
+    attachmentTray.appendChild(error);
+  }
+  attachmentTray.classList.toggle('visible', pendingAttachments.length > 0 || !!attachmentError);
+}
+
+function appendMessageFiles(bubble, files) {
+  if (!files?.length) return;
+  const row = document.createElement('div');
+  row.className = 'message-files';
+  for (const file of files) {
+    const chip = document.createElement('span');
+    chip.className = 'message-file';
+    chip.textContent = file.name;
+    chip.title = `${file.name} (${Math.max(1, Math.ceil(file.size / 1024))} KB)`;
+    row.appendChild(chip);
+  }
+  bubble.appendChild(row);
+}
+
+function messageForModel(message) {
+  if (!message.attachments?.length) return { role: message.role, content: message.content };
+  const files = message.attachments.map(file => {
+    const safeName = file.name.replace(/[\r\n]/g, ' ');
+    return `--- BEGIN ATTACHED FILE: ${safeName} ---\n${file.content}\n--- END ATTACHED FILE: ${safeName} ---`;
+  }).join('\n\n');
+  return { role: message.role, content: `${message.content}\n\n${files}` };
+}
+
+function renderTasks() {
+  taskStrip.innerHTML = '';
+  for (const [id, task] of Object.entries(TASKS)) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'task-option' + (id === activeTask ? ' active' : '');
+    button.disabled = !availableModels.has(task.model);
+    button.setAttribute('role', 'tab');
+    button.setAttribute('aria-selected', id === activeTask ? 'true' : 'false');
+    button.innerHTML = `<span class="task-kicker"></span><span class="task-name"></span><span class="task-desc"></span>`;
+    button.querySelector('.task-kicker').textContent = task.kicker;
+    button.querySelector('.task-name').textContent = task.name;
+    button.querySelector('.task-desc').textContent = button.disabled ? 'Model not installed' : task.detail;
+    button.addEventListener('click', () => selectTask(id));
+    taskStrip.appendChild(button);
+  }
+}
+
+function selectTask(id) {
+  const task = TASKS[id];
+  if (!task || !availableModels.has(task.model) || busy) return;
+  activeTask = id;
+  model = task.model;
+  modelSelect.value = model;
+  input.placeholder = task.starter;
+  try {
+    localStorage.setItem(TASK_KEY, id);
+    localStorage.setItem(MODEL_KEY, model);
+  } catch {}
+  renderTasks();
+  const empty = log.querySelector('.empty');
+  if (empty) empty.textContent = task.starter;
+}
+
 // ---- sidebar ----
 function renderSidebar() {
   chatList.innerHTML = '';
@@ -192,6 +398,7 @@ function renderSidebar() {
 
 function switchChat(id) {
   if (busy) return;
+  clearAttachments();
   activeId = id;
   saveActiveId();
   renderSidebar();
@@ -200,6 +407,7 @@ function switchChat(id) {
 
 function deleteChat(id) {
   if (busy) return;
+  clearAttachments();
   chats = chats.filter(c => c.id !== id);
   if (!chats.length) chats = [newChatObj()];
   if (activeId === id) activeId = chats[0].id;
@@ -211,6 +419,7 @@ function deleteChat(id) {
 
 document.getElementById('new-chat').addEventListener('click', () => {
   if (busy) return;
+  clearAttachments();
   const c = newChatObj();
   chats.unshift(c);
   activeId = c.id;
@@ -243,13 +452,14 @@ function renderLog() {
   if (!chat.messages.length) {
     const p = document.createElement('div');
     p.className = 'empty';
-    p.textContent = 'Say something to get started.';
+    p.textContent = TASKS[activeTask].starter;
     log.appendChild(p);
     return;
   }
   for (const m of chat.messages) {
     const div = addRawMsg(m.role === 'user' ? 'user' : 'bot');
     renderContent(div, m.content);
+    appendMessageFiles(div, m.attachments);
   }
   log.scrollTop = log.scrollHeight;
 }
@@ -285,9 +495,13 @@ fetch('/llm/v1/models').then(r => {
 }).then(d => {
   if (!Array.isArray(d.data) || !d.data.length) throw new Error('no models installed');
   const ids = d.data.map(item => item.id);
+  availableModels = new Set(ids);
   let saved = null;
   try { saved = localStorage.getItem(MODEL_KEY); } catch {}
-  model = ids.includes(saved) ? saved : ids[0];
+  const taskModel = TASKS[activeTask]?.model;
+  model = ids.includes(taskModel) ? taskModel : (ids.includes(saved) ? saved : ids[0]);
+  const matchingTask = Object.entries(TASKS).find(([, task]) => task.model === model);
+  if (matchingTask) activeTask = matchingTask[0];
   modelSelect.innerHTML = '';
   for (const id of ids) {
     const option = document.createElement('option');
@@ -299,13 +513,20 @@ fetch('/llm/v1/models').then(r => {
   modelsReady = true;
   modelSelect.disabled = false;
   sendBtn.disabled = false;
+  renderTasks();
+  selectTask(activeTask);
 }).catch(() => {
   modelSelect.innerHTML = '<option>server unreachable</option>';
 });
 
 modelSelect.addEventListener('change', () => {
   model = modelSelect.value;
+  const matchingTask = Object.entries(TASKS).find(([, task]) => task.model === model);
+  if (matchingTask) activeTask = matchingTask[0];
   try { localStorage.setItem(MODEL_KEY, model); } catch {}
+  try { localStorage.setItem(TASK_KEY, activeTask); } catch {}
+  input.placeholder = TASKS[activeTask].starter;
+  renderTasks();
 });
 
 function setBusy(v) {
@@ -314,6 +535,8 @@ function setBusy(v) {
   stopBtn.style.display = v ? '' : 'none';
   input.disabled = v;
   modelSelect.disabled = v || !modelsReady;
+  attachBtn.disabled = v;
+  fileInput.disabled = v;
   if (!v) input.focus();
 }
 
@@ -321,11 +544,17 @@ async function send(text) {
   if (!modelsReady) return;
   const chat = getActiveChat();
   const wasEmpty = chat.messages.length === 0;
-  chat.messages.push({ role: 'user', content: text });
+  const sentAttachments = pendingAttachments;
+  pendingAttachments = [];
+  attachmentError = '';
+  renderAttachments();
+  chat.messages.push({ role: 'user', content: text, attachments: sentAttachments });
   if (wasEmpty) chat.title = text.length > 42 ? text.slice(0, 42) + '…' : text;
   saveChats();
   renderSidebar();
-  addRawMsg('user').textContent = text;
+  const userBubble = addRawMsg('user');
+  userBubble.textContent = text;
+  appendMessageFiles(userBubble, sentAttachments);
   const bubble = addRawMsg('bot');
   bubble.classList.add('cursor');
   chatTitle.textContent = chat.title;
@@ -336,7 +565,14 @@ async function send(text) {
     const res = await fetch(API, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model, messages: chat.messages, stream: true }),
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: TASKS[activeTask].prompt },
+          ...chat.messages.map(messageForModel)
+        ],
+        stream: true
+      }),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error('HTTP ' + res.status + ': ' + await res.text());
@@ -377,13 +613,40 @@ async function send(text) {
 renderSidebar();
 renderLog();
 
+attachBtn.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', async () => {
+  attachmentError = '';
+  for (const file of fileInput.files) {
+    const used = conversationAttachmentBytes() +
+      pendingAttachments.reduce((sum, item) => sum + item.size, 0);
+    if (used + file.size > MAX_ATTACHMENT_BYTES) {
+      attachmentError = 'Attachment limit is 25 KB per conversation.';
+      break;
+    }
+    const content = await file.text();
+    if (content.includes('\0')) {
+      attachmentError = `${file.name} appears to be binary.`;
+      continue;
+    }
+    pendingAttachments.push({
+      id: Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+      name: file.name,
+      size: file.size,
+      content
+    });
+  }
+  fileInput.value = '';
+  renderAttachments();
+});
+
 document.getElementById('form').addEventListener('submit', e => {
   e.preventDefault();
   const text = input.value.trim();
-  if (!text || controller) return;
+  if ((!text && !pendingAttachments.length) || controller) return;
+  const message = text || 'Please analyze the attached file(s).';
   input.value = '';
   input.style.height = 'auto';
-  send(text);
+  send(message);
 });
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }

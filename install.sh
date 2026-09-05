@@ -14,11 +14,17 @@ here=$(cd "$(dirname "$0")" && pwd)
 unit_target=/etc/systemd/system/llama-cli-wrapper.service
 models=(
     Qwen3.5-2B-Q4_K_M.gguf
+    qwen2.5-coder-3b-instruct-q4_k_m.gguf
+    Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf
+    granite-3.3-2b-instruct-Q4_K_M.gguf
     Qwen3-1.7B-Q4_K_M.gguf
     SmolLM3-Q4_K_M.gguf
 )
 model_urls=(
     "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-Q4_K_M.gguf"
+    "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf"
+    "https://huggingface.co/second-state/Qwen2.5-Math-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf"
+    "https://huggingface.co/ibm-granite/granite-3.3-2b-instruct-GGUF/resolve/main/granite-3.3-2b-instruct-Q4_K_M.gguf"
     "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
     "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf"
 )
@@ -42,7 +48,15 @@ for i in "${!models[@]}"; do
     model_url=${model_urls[$i]}
     if [[ ! -f "$here/models/$model" && ! -f "/opt/llm/models/$model" ]]; then
         echo "Downloading $model"
-        curl -fL --progress-bar -o "$here/models/$model" "$model_url"
+        partial="$here/models/$model.part"
+        rm -f "$partial"
+        if curl -fL --retry 3 --progress-bar -o "$partial" "$model_url"; then
+            mv "$partial" "$here/models/$model"
+        else
+            rm -f "$partial"
+            echo "Download failed: $model" >&2
+            exit 1
+        fi
     elif [[ -f "/opt/llm/models/$model" ]]; then
         echo "Already installed: $model"
     else

@@ -15,6 +15,9 @@ LLAMA_SERVER = os.environ.get("LLAMA_SERVER", "/opt/llm/llama.cpp/llama-server")
 MODEL_DIR = os.environ.get("LLAMA_MODEL_DIR", "/opt/llm/models")
 MODEL_FILES = (
     "Qwen3.5-2B-Q4_K_M.gguf",
+    "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
+    "Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf",
+    "granite-3.3-2b-instruct-Q4_K_M.gguf",
     "Qwen3-1.7B-Q4_K_M.gguf",
     "SmolLM3-Q4_K_M.gguf",
 )

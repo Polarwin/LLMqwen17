@@ -9,9 +9,19 @@ RAM or VRAM continuously:
 - LAN devices: `https://192.168.0.9/llm/v1` (nginx + mkcert cert)
 - Tailscale devices: reachable through the tailnet like any other service
 
-The web UI can switch between Qwen3.5-2B, Qwen3-1.7B, and SmolLM3-3B. Only
-the selected model is loaded, and changing the selector takes effect on the
-next message.
+The web UI presents task-focused modes while retaining a direct model selector:
+
+| task | model | role |
+|---|---|---|
+| General chat | Qwen3.5-2B Q4_K_M | balanced everyday assistance |
+| Code studio | Qwen2.5-Coder-3B Instruct Q4_K_M | coding and debugging |
+| Math lab | Qwen2.5-Math-1.5B Instruct Q4_K_M | equations and mathematical reasoning |
+| Document desk | Granite 3.3-2B Instruct Q4_K_M | analysis and extraction |
+| Writing room | SmolLM3-3B Q4_K_M | prose and multilingual writing |
+| Quick answer | Qwen3-1.7B Q4_K_M | low-latency simple requests |
+
+Only the selected model is loaded. Changing tasks takes effect on the next
+message and adds a small task-specific system instruction to that request.
 
 ## Hardware / OS requirements
 
@@ -52,7 +62,7 @@ The script:
    `/opt/llm/models/`
 2. installs and starts the lightweight `llama-cli-wrapper.service` gateway on
    port **8349**, while disabling the old always-on `llama-server.service`
-3. installs all three model GGUFs and deploys the chat page to
+3. installs all six model GGUFs and deploys the chat page to
    `/opt/llm/chat/index.html`
 4. appends an `/llm/` proxy location to the existing `homeserver` nginx
    server block (backup at `…/homeserver.bak-llm`, `nginx -t` checked,
