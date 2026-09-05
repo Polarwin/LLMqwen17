@@ -1,5 +1,5 @@
 [Unit]
-Description=On-demand llama-server gateway (Qwen3-1.7B)
+Description=On-demand multi-model llama-server gateway
 After=network.target
 
 [Service]

@@ -18,11 +18,12 @@ MODEL_FILES = (
     "qwen2.5-coder-3b-instruct-q4_k_m.gguf",
     "Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf",
     "granite-3.3-2b-instruct-Q4_K_M.gguf",
+    "Qwen3-0.6B-Q4_K_M.gguf",
     "Qwen3-1.7B-Q4_K_M.gguf",
     "SmolLM3-Q4_K_M.gguf",
 )
 MODELS = {name: os.path.join(MODEL_DIR, name) for name in MODEL_FILES}
-DEFAULT_MODEL = os.environ.get("LLAMA_DEFAULT_MODEL", MODEL_FILES[0])
+DEFAULT_MODEL = os.environ.get("LLAMA_DEFAULT_MODEL", "Qwen3-1.7B-Q4_K_M.gguf")
 HOST = os.environ.get("LLAMA_HOST", "127.0.0.1")
 PORT = int(os.environ.get("LLAMA_PORT", "8349"))
 ENGINE_HOST = os.environ.get("LLAMA_ENGINE_HOST", "127.0.0.1")

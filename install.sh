@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install Qwen3-1.7B as a system-wide on-demand local LLM service:
+# Install a system-wide, multi-model, on-demand local LLM service:
 # a small gateway starts llama-server on demand behind 127.0.0.1:8349; LAN HTTPS via
 # the existing homeserver nginx block at https://192.168.0.9/llm/v1.
 # Engine and model live in /opt/llm so any app on this host can use them.
@@ -17,6 +17,7 @@ models=(
     qwen2.5-coder-3b-instruct-q4_k_m.gguf
     Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf
     granite-3.3-2b-instruct-Q4_K_M.gguf
+    Qwen3-0.6B-Q4_K_M.gguf
     Qwen3-1.7B-Q4_K_M.gguf
     SmolLM3-Q4_K_M.gguf
 )
@@ -25,6 +26,7 @@ model_urls=(
     "https://huggingface.co/Qwen/Qwen2.5-Coder-3B-Instruct-GGUF/resolve/main/qwen2.5-coder-3b-instruct-q4_k_m.gguf"
     "https://huggingface.co/second-state/Qwen2.5-Math-1.5B-Instruct-GGUF/resolve/main/Qwen2.5-Math-1.5B-Instruct-Q4_K_M.gguf"
     "https://huggingface.co/ibm-granite/granite-3.3-2b-instruct-GGUF/resolve/main/granite-3.3-2b-instruct-Q4_K_M.gguf"
+    "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q4_K_M.gguf"
     "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/Qwen3-1.7B-Q4_K_M.gguf"
     "https://huggingface.co/ggml-org/SmolLM3-3B-GGUF/resolve/main/SmolLM3-Q4_K_M.gguf"
 )

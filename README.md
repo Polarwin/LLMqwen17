@@ -1,4 +1,4 @@
-# LLMqwen17 — on-demand Qwen3-1.7B local chat
+# LLMqwen17 — on-demand multi-model local chat
 
 System-wide local LLM on this Ubuntu host. A small Python gateway starts
 `llama-server` for the first completion, proxies its native OpenAI-compatible
@@ -13,12 +13,12 @@ The web UI presents task-focused modes while retaining a direct model selector:
 
 | task | model | role |
 |---|---|---|
-| General chat | Qwen3.5-2B Q4_K_M | balanced everyday assistance |
+| General chat | Qwen3-1.7B Q4_K_M | balanced everyday assistance |
 | Code studio | Qwen2.5-Coder-3B Instruct Q4_K_M | coding and debugging |
 | Math lab | Qwen2.5-Math-1.5B Instruct Q4_K_M | equations and mathematical reasoning |
 | Document desk | Granite 3.3-2B Instruct Q4_K_M | analysis and extraction |
 | Writing room | SmolLM3-3B Q4_K_M | prose and multilingual writing |
-| Quick answer | Qwen3-1.7B Q4_K_M | low-latency simple requests |
+| Quick answer | Qwen3-0.6B Q4_K_M | near-instant simple requests, non-thinking mode |
 
 Only the selected model is loaded. Changing tasks takes effect on the next
 message and adds a small task-specific system instruction to that request.
@@ -47,8 +47,9 @@ Bundled in this directory (no build needed):
 
 - `llama.cpp/` — prebuilt llama.cpp b10797 ubuntu-vulkan-x64 binaries
   (re-downloadable, see `engine_url` in `install.sh`)
-- `models/Qwen3-1.7B-Q4_K_M.gguf` — the model (Apache 2.0), 1.1 GB
-  (re-downloadable from unsloth/Qwen3-1.7B-GGUF, see `model_url`)
+- `models/Qwen3-0.6B-Q4_K_M.gguf` — the quick-answer model (Apache 2.0),
+  about 397 MB (re-downloadable from Qwen/Qwen3-0.6B-GGUF; see
+  `model_urls` in `install.sh`)
 
 ## Install
 
@@ -62,7 +63,7 @@ The script:
    `/opt/llm/models/`
 2. installs and starts the lightweight `llama-cli-wrapper.service` gateway on
    port **8349**, while disabling the old always-on `llama-server.service`
-3. installs all six model GGUFs and deploys the chat page to
+3. installs all seven model GGUFs and deploys the chat page to
    `/opt/llm/chat/index.html`
 4. appends an `/llm/` proxy location to the existing `homeserver` nginx
    server block (backup at `…/homeserver.bak-llm`, `nginx -t` checked,
@@ -78,7 +79,7 @@ curl http://127.0.0.1:8349/v1/chat/completions -H "Content-Type: application/jso
 }'
 ```
 
-Notes for good results with a 1.7B model:
+Notes for good results with Qwen3 models:
 
 - **`/no_think`** in a prompt disables thinking when it is unnecessary.
 - One generation runs at a time to avoid loading two model copies into the

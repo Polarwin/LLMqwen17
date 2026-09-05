@@ -190,7 +190,7 @@ const TASK_KEY = 'qwenChat.task';
 const TASKS = {
   general: {
     kicker: 'EVERYDAY', name: 'General chat', detail: 'Balanced help and reasoning',
-    model: 'Qwen3.5-2B-Q4_K_M.gguf',
+    model: 'Qwen3-1.7B-Q4_K_M.gguf',
     prompt: 'Be a clear, practical general assistant. Answer directly and state uncertainty when needed.',
     starter: 'Ask a question, explore an idea, or make a plan.'
   },
@@ -219,9 +219,10 @@ const TASKS = {
     starter: 'Draft, rewrite, translate, or refine a passage.'
   },
   quick: {
-    kicker: 'FAST', name: 'Quick answer', detail: 'Lowest latency for simple requests',
-    model: 'Qwen3-1.7B-Q4_K_M.gguf',
-    prompt: 'Answer directly and concisely. Avoid extended reasoning unless the user explicitly requests it.',
+    kicker: 'INSTANT', name: 'Quick answer', detail: 'Qwen3 0.6B for near-instant replies',
+    model: 'Qwen3-0.6B-Q4_K_M.gguf',
+    prompt: 'Answer directly and concisely. Avoid extended reasoning unless the user explicitly requests it. /no_think',
+    params: { temperature: 0.7, top_p: 0.8, top_k: 20, presence_penalty: 1.5, max_tokens: 256 },
     starter: 'Ask for a short answer, definition, or simple transformation.'
   }
 };
@@ -571,7 +572,8 @@ async function send(text) {
           { role: 'system', content: TASKS[activeTask].prompt },
           ...chat.messages.map(messageForModel)
         ],
-        stream: true
+        stream: true,
+        ...(TASKS[activeTask].params || {})
       }),
       signal: controller.signal,
     });
